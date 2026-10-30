@@ -46,3 +46,15 @@ Exit codes: `0` success, `2` capacity, otherwise Codex's own exit code.
 Automatic retries are safest for read-only or idempotent prompts. Retries only happen before the model starts working, but do not rely on them for prompts that create deployments, send messages, delete data, or perform other non-idempotent actions.
 
 Implementation notes: the prompt is written to stdin as BOM-less UTF-8 and stdout/stderr are decoded as UTF-8, so non-ASCII prompts and replies are not mangled by the console code page (for example 936). Stdout/stderr are consumed with `ReadLineAsync` and `Task.WaitAny`, waking at most once per second so Ctrl+C and the deadline are honored. Stopping an attempt kills the whole process tree (`taskkill /T`), since npm's `codex.cmd` starts node and the native binary underneath it.
+
+## Background proxy for Codex Desktop (official ChatGPT channel)
+
+The wrapper above only covers `codex exec`. `proxy/` keeps Codex Desktop (and the CLI) from showing capacity errors on the official ChatGPT channel:
+
+- `proxy/codex-gpt-retry-proxy.mjs` listens on `127.0.0.1:18798` and forwards to `https://chatgpt.com` through `HTTPS_PROXY`. A `429` (other than plan usage limits), `5xx`, or an SSE `server_is_overloaded` / `error` event that arrives before any model output is retried in the background for up to 10 minutes; Codex just waits. Errors after output started, usage-limit errors and everything else pass through. WebSocket upgrades get `426`, which makes Codex switch to HTTPS silently.
+- `proxy/install.ps1` registers the hidden scheduled task `CodexGptRetryProxy` (at logon, re-checked every minute, single instance) and sets `openai_base_url` in `C:\ProgramData\OpenAI\Codex\config.toml`. That system layer only fills keys missing from `~/.codex/config.toml`, so CC Switch and Codex Desktop rewriting the user config do not remove it, and only the built-in OpenAI provider reads it — custom providers selected in CC Switch are unaffected. Restart Codex Desktop afterwards.
+- `proxy/uninstall.ps1` removes the config line, the task and the process.
+- Log: `%USERPROFILE%\.codex\gpt-retry-proxy.log` (`retry`, `recovered`, `gave_up`, `late_error_passed`). Status: `http://127.0.0.1:18798/__health`.
+- Tests: `node --test proxy/test.mjs`.
+
+Environment overrides: `GPT_RETRY_PORT`, `GPT_RETRY_MAX_WAIT_SECONDS`, `GPT_RETRY_UPSTREAM_PROXY`, `GPT_RETRY_LOG`.
