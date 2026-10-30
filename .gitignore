@@ -1,0 +1,7 @@
+# Local and generated files
+work/
+outputs/
+*.local.*
+.env
+.env.*
+!.env.example
